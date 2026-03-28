@@ -12,6 +12,7 @@
     ensureEducationLayers,
     setEducationVisibility,
     removeEducationLayers,
+    setEducationHighlightFadeOpacity,
   } from "./educationLayers.js";
 
   let container;
@@ -22,10 +23,19 @@
   let syncPitchRaf = 0;
   /** @type {unknown} */
   let geocoderControl = null;
-  /** While true, skip auto pitch/bearing sync so flyTo/fitBounds from search is not overwritten */
+  /** While true, skip auto pitch/bearing sync so flyTo / city animations are not overwritten */
   let skipPitchSyncForSearch = false;
 
   let mapLoaded = false;
+  /** Incremented to ignore stale moveend / fade from a previous city fly */
+  let cityFlyGeneration = 0;
+  /** @type {number} */
+  let educationFadeRaf = 0;
+
+  /** Set in onMount — city shortcut buttons */
+  let flyToTbilisi = () => {};
+  let flyToRustavi = () => {};
+  let cancelEducationFadeLoop = () => {};
 
   const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
@@ -37,8 +47,18 @@
   const USE_FLAT_MAP_ONLY = false;
 
   const SEARCH_FLY_ZOOM = 17;
-  const SEARCH_FLY_PITCH = 45;
+  const SEARCH_FLY_PITCH = 55;
   const SEARCH_FLY_BEARING = -25;
+
+  /**
+   * Initial camera — Rustavi, Zakaria Paliashvili area near Public Service Hall
+   * (OSM: ~41.55593, 44.98404) so the street and იუსტიციის სახლი vicinity match the app screenshot.
+   */
+  const INITIAL_CENTER = /** @type {[number, number]} */ ([44.9840431, 41.5559346]);
+  const INITIAL_ZOOM = 16.5;
+  const INITIAL_PITCH = 55;
+  /** Slight leftward map rotation (matches typical 3D street framing). */
+  const INITIAL_BEARING = -12;
 
   /**
    * @param {Record<string, unknown> & { geometry?: GeoJSON.Geometry }} f Geocoder result feature
@@ -74,10 +94,10 @@
     map = new mapboxgl.Map({
       container,
       style: "mapbox://styles/mapbox/standard",
-      center: [44.8271, 41.7151],
-      zoom: 15.5,
-      pitch: 45,
-      bearing: -25,
+      center: INITIAL_CENTER,
+      zoom: INITIAL_ZOOM,
+      pitch: INITIAL_PITCH,
+      bearing: INITIAL_BEARING,
       antialias: true,
       ...(USE_FLAT_MAP_ONLY ? { projection: "mercator" } : {}),
       config: {
@@ -149,7 +169,7 @@
     const Z_TILT = 13;
     /** Smooth ramp from flat to HIGH_* for z in (Z_TILT, Z_TILT + RAMP]. */
     const TILT_RAMP = 1;
-    const HIGH_PITCH = 45;
+    const HIGH_PITCH = 55;
     const HIGH_BEARING = -25;
 
     /**
@@ -188,6 +208,71 @@
         syncPitchBearingToZoom();
       });
     }
+
+    const CITY_FADE_MS = 3000;
+
+    cancelEducationFadeLoop = () => {
+      if (educationFadeRaf) {
+        cancelAnimationFrame(educationFadeRaf);
+        educationFadeRaf = 0;
+      }
+    };
+
+    function fadeEducationHighlightsIn(durationMs, onDone) {
+      cancelEducationFadeLoop();
+      const start = performance.now();
+      function step(/** @type {number} */ now) {
+        const t = Math.min(1, (now - start) / durationMs);
+        const s = t * t * (3 - 2 * t);
+        setEducationHighlightFadeOpacity(map, s);
+        if (t < 1) {
+          educationFadeRaf = requestAnimationFrame(step);
+        } else {
+          educationFadeRaf = 0;
+          onDone?.();
+        }
+      }
+      educationFadeRaf = requestAnimationFrame(step);
+    }
+
+    /** @param {Object} opts Mapbox flyTo options */
+    function flyToCity(opts) {
+      if (!map || !mapLoaded) return;
+      cityFlyGeneration += 1;
+      const gen = cityFlyGeneration;
+      cancelEducationFadeLoop();
+      skipPitchSyncForSearch = true;
+      setEducationHighlightFadeOpacity(map, 0);
+      map.flyTo(opts);
+      map.once("moveend", () => {
+        if (gen !== cityFlyGeneration) return;
+        fadeEducationHighlightsIn(CITY_FADE_MS, () => {
+          if (gen !== cityFlyGeneration) return;
+          skipPitchSyncForSearch = false;
+          syncPitchBearingToZoom();
+        });
+      });
+    }
+
+    flyToTbilisi = () =>
+      flyToCity({
+        center: [44.793, 41.715],
+        zoom: 16.5,
+        pitch: 55,
+        bearing: -15,
+        duration: 3000,
+        essential: true,
+      });
+
+    flyToRustavi = () =>
+      flyToCity({
+        center: INITIAL_CENTER,
+        zoom: INITIAL_ZOOM,
+        pitch: INITIAL_PITCH,
+        bearing: INITIAL_BEARING,
+        duration: 3000,
+        essential: true,
+      });
 
     map.on("load", () => {
       map.resize();
@@ -237,6 +322,7 @@
   onDestroy(() => {
     if (syncPitchRaf) cancelAnimationFrame(syncPitchRaf);
     syncPitchRaf = 0;
+    cancelEducationFadeLoop();
     if (geocoderControl) {
       geocoderControl.onRemove();
       geocoderControl = null;
@@ -262,6 +348,28 @@
   <div class="left-ui">
     <div class="geocoder-slot" bind:this={geocoderSlot}></div>
     {#if mapLoaded}
+      <div
+        class="city-switcher"
+        role="group"
+        aria-label="City shortcuts"
+      >
+        <button
+          type="button"
+          class="city-btn"
+          title="გადაფრინდი თბილისში"
+          on:click={flyToTbilisi}
+        >
+          თბილისი
+        </button>
+        <button
+          type="button"
+          class="city-btn"
+          title="გადაფრინდი რუსთავში"
+          on:click={flyToRustavi}
+        >
+          რუსთავი
+        </button>
+      </div>
       <div class="filters-overlay">
         <EducationFiltersOverlay on:change={onEducationFilterChange} />
       </div>
@@ -396,6 +504,46 @@
     width: 100%;
     pointer-events: auto;
     min-width: 0;
+  }
+
+  .city-switcher {
+    display: flex;
+    gap: 0.4rem;
+    padding: 0.45rem 0.5rem;
+    border-radius: 10px;
+    background: rgba(255, 248, 220, 0.55);
+    border: 1px solid rgba(210, 175, 80, 0.4);
+    box-shadow: 0 4px 18px rgba(60, 45, 10, 0.12);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    pointer-events: auto;
+  }
+
+  .city-btn {
+    flex: 1;
+    min-width: 0;
+    padding: 0.4rem 0.5rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: rgba(35, 30, 12, 0.92);
+    background: rgba(255, 255, 255, 0.45);
+    border: 1px solid rgba(180, 150, 70, 0.35);
+    border-radius: 8px;
+    cursor: pointer;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease,
+      transform 0.12s ease;
+  }
+
+  .city-btn:hover {
+    background: rgba(255, 255, 255, 0.75);
+    border-color: rgba(160, 130, 50, 0.5);
+  }
+
+  .city-btn:active {
+    transform: scale(0.98);
   }
 
   .filters-overlay {

@@ -354,3 +354,38 @@ export function removeEducationLayers(map) {
   });
   if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
 }
+
+/** Full opacity for fill-extrusion highlight caps (matches extrusionPaint). */
+export const EDUCATION_FILL_EXTRUSION_OPACITY_FULL = 0.92;
+
+/** Full opacity for poi_label circle highlights. */
+export const EDUCATION_CIRCLE_OPACITY_FULL = 0.88;
+
+const EXTRUSION_LAYER_IDS = [
+  LAYERS.schoolBuilding,
+  LAYERS.uniBuilding,
+  LAYERS.kinderBuilding,
+];
+
+const POI_LAYER_IDS = [LAYERS.schoolPoi, LAYERS.uniPoi, LAYERS.kinderPoi];
+
+/**
+ * Fade multiplier 0–1 for both extrusion and POI layers (avoids abrupt "pop-in").
+ * @param {import('mapbox-gl').Map} map
+ * @param {number} t 0..1
+ */
+export function setEducationHighlightFadeOpacity(map, t) {
+  const clamped = Math.max(0, Math.min(1, t));
+  const eo = EDUCATION_FILL_EXTRUSION_OPACITY_FULL * clamped;
+  const co = EDUCATION_CIRCLE_OPACITY_FULL * clamped;
+  for (const id of EXTRUSION_LAYER_IDS) {
+    if (map.getLayer(id)) {
+      map.setPaintProperty(id, "fill-extrusion-opacity", eo);
+    }
+  }
+  for (const id of POI_LAYER_IDS) {
+    if (map.getLayer(id)) {
+      map.setPaintProperty(id, "circle-opacity", co);
+    }
+  }
+}

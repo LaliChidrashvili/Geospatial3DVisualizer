@@ -7,12 +7,15 @@
   import "mapbox-gl/dist/mapbox-gl.css";
   import MapboxGeocoder from "@mapbox/mapbox-gl-geocoder";
   import "@mapbox/mapbox-gl-geocoder/lib/mapbox-gl-geocoder.css";
+  import { DateTime } from "luxon";
+  import tzlookup from "tz-lookup";
   import EducationFiltersOverlay from "./EducationFiltersOverlay.svelte";
   import {
     ensureEducationLayers,
     setEducationVisibility,
     removeEducationLayers,
     setEducationHighlightFadeOpacity,
+    syncEducationExtrusionNightStyle,
   } from "./educationLayers.js";
 
   let container;
@@ -37,6 +40,12 @@
   let flyToRustavi = () => {};
   let cancelEducationFadeLoop = () => {};
 
+  /** @type {ReturnType<typeof setInterval> | undefined} */
+  let basemapLightingIntervalId = undefined;
+
+  /** Last basemap light preset — refresh highlight opacities when it changes */
+  let previousEduLightPreset = "";
+
   const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
   /** Geocoder result labels: not the search language — you can type Latin or Georgian. Comma-separated IETF tags (e.g. en,ka). See VITE_GEOCODER_LANGUAGE in .env.example */
@@ -59,6 +68,67 @@
   const INITIAL_PITCH = 55;
   /** Slight leftward map rotation (matches typical 3D street framing). */
   const INITIAL_BEARING = -12;
+
+  /** How often to re-apply lighting if the app stays open across time-of-day boundaries */
+  const BASEMAP_LIGHTING_INTERVAL_MS = 60 * 1000;
+
+  /**
+   * Mapbox Standard `basemap.lightPreset` from local civil hour at the viewed area (0–23).
+   * dawn: 06–11, day: 11–18, dusk: 18–21, night: 21–06
+   */
+  function basemapLightPresetForHour(hour) {
+    if (hour >= 6 && hour < 11) return "dawn";
+    if (hour >= 11 && hour < 18) return "day";
+    if (hour >= 18 && hour < 21) return "dusk";
+    return "night";
+  }
+
+  /**
+   * IANA zone from coordinates, then current hour in that zone (Luxon).
+   * @param {number} lat
+   * @param {number} lng
+   */
+  function localHourAtLngLat(lat, lng) {
+    let zone = "UTC";
+    try {
+      zone = tzlookup(lat, lng);
+    } catch {
+      /* invalid coords */
+    }
+    return DateTime.now().setZone(zone).hour;
+  }
+
+  /**
+   * @param {import('mapbox-gl').Map} m
+   */
+  function localHourAtMapViewCenter(m) {
+    const c = m.getCenter();
+    return localHourAtLngLat(c.lat, c.lng);
+  }
+
+  /**
+   * Real-time lighting for 3D buildings / shadows; POI labels follow the preset.
+   * Uses the map center’s timezone (not the browser’s local clock).
+   * @param {import('mapbox-gl').Map} m
+   */
+  function applyDynamicBasemapLighting(m) {
+    if (!m || typeof m.setConfigProperty !== "function") return;
+    const preset = basemapLightPresetForHour(localHourAtMapViewCenter(m));
+    const presetChangedForHighlights =
+      mapLoaded && preset !== previousEduLightPreset;
+    try {
+      m.setConfigProperty("basemap", "lightPreset", preset);
+      m.setConfigProperty("basemap", "show3dObjects", true);
+      m.setConfigProperty("basemap", "showPointOfInterestLabels", true);
+    } catch (e) {
+      console.warn("Basemap lighting", e);
+    }
+    syncEducationExtrusionNightStyle(m, preset);
+    if (presetChangedForHighlights) {
+      setEducationHighlightFadeOpacity(m, 1);
+    }
+    previousEduLightPreset = preset;
+  }
 
   /**
    * @param {Record<string, unknown> & { geometry?: GeoJSON.Geometry }} f Geocoder result feature
@@ -90,6 +160,10 @@
 
     mapboxgl.accessToken = token;
 
+    const initialLightPreset = basemapLightPresetForHour(
+      localHourAtLngLat(INITIAL_CENTER[1], INITIAL_CENTER[0])
+    );
+
     // Mapbox Standard has no legacy "composite" source; 3D objects use Standard style config.
     map = new mapboxgl.Map({
       container,
@@ -103,7 +177,7 @@
       config: {
         basemap: {
           show3dObjects: true,
-          lightPreset: "day",
+          lightPreset: initialLightPreset,
         },
       },
     });
@@ -115,10 +189,9 @@
       mapboxgl: mapboxgl,
       marker: false,
       placeholder: "Search (e.g. Bob Walsh Street, Tbilisi)",
-      types: "address,poi,place",
-      countries: "ge",
+      types: "place,address,poi",
       proximity: "ip",
-      // Keep fixed IP biasing for Georgia; do not override with map center
+      // Do not override proximity with map center while moving
       trackProximity: false,
       limit: 10,
       language: geocoderLanguage,
@@ -276,14 +349,6 @@
 
     map.on("load", () => {
       map.resize();
-      if (typeof map.setConfigProperty === "function") {
-        try {
-          map.setConfigProperty("basemap", "show3dObjects", true);
-          map.setConfigProperty("basemap", "lightPreset", "day");
-        } catch (e) {
-          console.warn(e);
-        }
-      }
       try {
         ensureEducationLayers(map);
         setEducationVisibility(map, {
@@ -294,7 +359,16 @@
       } catch (e) {
         console.warn("Education highlight layers", e);
       }
+      applyDynamicBasemapLighting(map);
+      if (basemapLightingIntervalId !== undefined) {
+        clearInterval(basemapLightingIntervalId);
+      }
+      basemapLightingIntervalId = setInterval(
+        () => applyDynamicBasemapLighting(map),
+        BASEMAP_LIGHTING_INTERVAL_MS
+      );
       mapLoaded = true;
+      setEducationHighlightFadeOpacity(map, 1);
     });
 
     map.once("idle", () => {
@@ -303,6 +377,10 @@
 
     map.on("zoom", scheduleSyncPitchBearing);
     map.on("zoomend", syncPitchBearingToZoom);
+
+    map.on("moveend", () => {
+      applyDynamicBasemapLighting(map);
+    });
 
     map.on("error", (e) => {
       if (e.error?.message) {
@@ -320,6 +398,10 @@
   }
 
   onDestroy(() => {
+    if (basemapLightingIntervalId !== undefined) {
+      clearInterval(basemapLightingIntervalId);
+      basemapLightingIntervalId = undefined;
+    }
     if (syncPitchRaf) cancelAnimationFrame(syncPitchRaf);
     syncPitchRaf = 0;
     cancelEducationFadeLoop();

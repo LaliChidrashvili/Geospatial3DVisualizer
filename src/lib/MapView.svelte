@@ -2,13 +2,23 @@
   import { onMount, onDestroy } from "svelte";
   import mapboxgl from "mapbox-gl";
   import "mapbox-gl/dist/mapbox-gl.css";
+  import MapboxGeocoder from "@mapbox/mapbox-gl-geocoder";
+  import "@mapbox/mapbox-gl-geocoder/lib/mapbox-gl-geocoder.css";
 
   let container;
   let map;
   let errorMessage = "";
   let syncPitchRaf = 0;
+  /** @type {unknown} */
+  let geocoderControl = null;
+  /** While true, skip auto pitch/bearing sync so flyTo/fitBounds from search is not overwritten */
+  let skipPitchSyncForSearch = false;
 
   const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+  /** Geocoder result labels: not the search language — you can type Latin or Georgian. Comma-separated IETF tags (e.g. en,ka). See VITE_GEOCODER_LANGUAGE in .env.example */
+  const geocoderLanguage =
+    import.meta.env.VITE_GEOCODER_LANGUAGE || "en,ka";
 
   /** When true, use Mercator only (flat map); no globe — stable centering, no 3D globe view. */
   const USE_FLAT_MAP_ONLY = false;
@@ -41,6 +51,68 @@
 
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
+    const geocoder = new MapboxGeocoder({
+      accessToken: mapboxgl.accessToken,
+      mapboxgl: mapboxgl,
+      marker: false,
+      placeholder: "Search city or place",
+      types: "place,locality,region",
+      language: geocoderLanguage,
+      // Default is 2 — show suggestions from the first character
+      minLength: 1,
+      // Do not bias results to current map center — needed for globe / zoomed-out views
+      trackProximity: false,
+      flyTo: false,
+    });
+
+    function finishSearchNavigation() {
+      skipPitchSyncForSearch = false;
+      syncPitchBearingToZoom();
+    }
+
+    geocoder.on("result", (e) => {
+      const f = e.result;
+      if (!f) return;
+
+      skipPitchSyncForSearch = true;
+      map.once("moveend", finishSearchNavigation);
+
+      const bbox = f.bbox;
+      if (bbox && bbox.length >= 4) {
+        map.fitBounds(
+          [
+            [bbox[0], bbox[1]],
+            [bbox[2], bbox[3]],
+          ],
+          {
+            pitch: 65,
+            bearing: -25,
+            duration: 2200,
+            padding: 52,
+            essential: true,
+            maxZoom: 15,
+          }
+        );
+      } else {
+        const c = f.center || f.geometry?.coordinates;
+        if (c) {
+          map.flyTo({
+            center: c,
+            zoom: 14,
+            pitch: 65,
+            bearing: -25,
+            duration: 2200,
+            essential: true,
+          });
+        } else {
+          finishSearchNavigation();
+        }
+      }
+    });
+
+    map.addControl(geocoder, "top-left");
+    geocoderControl = geocoder;
+
     // Globe ↔ Mercator transition at high pitch visually shifts the globe; reset pitch/bearing during
     // zoom (not only on zoomend), before zoom is low enough for the globe to appear.
     const PITCH_ZOOM_CUTOFF = 8;
@@ -48,6 +120,7 @@
     const HIGH_BEARING = -25;
 
     function syncPitchBearingToZoom() {
+      if (skipPitchSyncForSearch) return;
       const z = map.getZoom();
       const low = z < PITCH_ZOOM_CUTOFF;
       const tp = low ? 0 : HIGH_PITCH;
@@ -92,6 +165,10 @@
   onDestroy(() => {
     if (syncPitchRaf) cancelAnimationFrame(syncPitchRaf);
     syncPitchRaf = 0;
+    if (map && geocoderControl) {
+      map.removeControl(geocoderControl);
+      geocoderControl = null;
+    }
     map?.remove();
     map = undefined;
   });
@@ -115,6 +192,14 @@
   .map {
     position: absolute;
     inset: 0;
+  }
+
+  :global(.mapboxgl-ctrl-top-left) {
+    z-index: 2;
+  }
+
+  :global(.mapboxgl-ctrl-top-right) {
+    z-index: 2;
   }
 
   .banner {

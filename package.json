@@ -14,6 +14,7 @@
     "vite": "^5.4.11"
   },
   "dependencies": {
+    "@mapbox/mapbox-gl-geocoder": "^5.1.2",
     "mapbox-gl": "^3.9.0"
   }
 }

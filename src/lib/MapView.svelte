@@ -25,14 +25,18 @@
     updateTerminatorOverlay,
   } from "./terminatorRaster.js";
   import {
+    EDUCATION_POI_TOOLTIP_LAYER_IDS,
     ensureEducationLayers,
     setEducationVisibility,
     removeEducationLayers,
     setEducationHighlightFadeOpacity,
+    setEducationPoiHoverMatch,
     syncEducationExtrusionNightStyle,
   } from "./educationLayers.js";
 
   let container;
+  /** @type {HTMLDivElement | undefined} */
+  let wrapEl;
   /** @type {HTMLDivElement | undefined} */
   let geocoderSlot;
   let map;
@@ -59,6 +63,106 @@
 
   /** Last basemap light preset — refresh highlight opacities when it changes */
   let previousEduLightPreset = "";
+
+  let eduTooltipVisible = false;
+  let eduTooltipText = "";
+  let eduTooltipLeft = 0;
+  let eduTooltipTop = 0;
+  $: eduTooltipIsDark =
+    previousEduLightPreset === "night" || previousEduLightPreset === "dusk";
+
+  /** Tooltip text: English first, then any label Mapbox exposes on the feature. */
+  const TOOLTIP_NAME_KEYS = [
+    "name_en",
+    "name:en",
+    "name",
+    "name:ka",
+    "name:latin",
+    "short_name",
+  ];
+
+  /**
+   * @param {Record<string, unknown> | null | undefined} props
+   */
+  function pickEducationTooltipLabel(props) {
+    if (!props || typeof props !== "object") return "";
+    for (const k of TOOLTIP_NAME_KEYS) {
+      const v = props[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    return "";
+  }
+
+  /** Tooltip + stroke highlight მხოლოდ POI წრეებზე — შენობაზე „უახლოესი“ POI სხვა სკოლის სახელს შეიძლება აიღოს. */
+  function onEduTooltipMove(/** @type {import('mapbox-gl').MapMouseEvent} */ e) {
+    if (!mapLoaded || !map || !wrapEl) return;
+    const pIds = EDUCATION_POI_TOOLTIP_LAYER_IDS.filter((id) => map.getLayer(id));
+    if (!pIds.length) {
+      eduTooltipVisible = false;
+      setEducationPoiHoverMatch(map, null);
+      return;
+    }
+
+    const pFeatures = map.queryRenderedFeatures(e.point, { layers: pIds });
+    const name =
+      pFeatures.length > 0
+        ? pickEducationTooltipLabel(pFeatures[0].properties ?? {})
+        : "";
+
+    if (!name) {
+      eduTooltipVisible = false;
+      setEducationPoiHoverMatch(map, null);
+      map.getCanvas().style.cursor = "";
+      return;
+    }
+
+    eduTooltipVisible = true;
+    eduTooltipText = name;
+    setEducationPoiHoverMatch(map, name);
+    map.getCanvas().style.cursor = "pointer";
+
+    const rect = wrapEl.getBoundingClientRect();
+    eduTooltipLeft = e.originalEvent.clientX - rect.left + 14;
+    eduTooltipTop = e.originalEvent.clientY - rect.top + 14;
+  }
+
+  function onEduTooltipLeave() {
+    eduTooltipVisible = false;
+    if (map) {
+      map.getCanvas().style.cursor = "";
+      setEducationPoiHoverMatch(map, null);
+    }
+  }
+
+  function onEduPoiLayerMouseEnter(
+    /** @type {import('mapbox-gl').MapLayerMouseEvent} */ e
+  ) {
+    if (!map || !e.features?.[0]) return;
+    const name = pickEducationTooltipLabel(e.features[0].properties ?? {});
+    if (name) setEducationPoiHoverMatch(map, name);
+  }
+
+  function onEduPoiLayerMouseLeave() {
+    /* see onEduBuildingLayerMouseLeave */
+  }
+
+  function attachEducationHoverLayerListeners() {
+    if (!map) return;
+    for (const id of EDUCATION_POI_TOOLTIP_LAYER_IDS) {
+      if (!map.getLayer(id)) continue;
+      map.on("mouseenter", id, onEduPoiLayerMouseEnter);
+      map.on("mouseleave", id, onEduPoiLayerMouseLeave);
+    }
+  }
+
+  function detachEducationHoverLayerListeners() {
+    if (!map) return;
+    for (const id of EDUCATION_POI_TOOLTIP_LAYER_IDS) {
+      if (!map.getLayer(id)) continue;
+      map.off("mouseenter", id, onEduPoiLayerMouseEnter);
+      map.off("mouseleave", id, onEduPoiLayerMouseLeave);
+    }
+  }
 
   const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
@@ -433,6 +537,9 @@
       );
       mapLoaded = true;
       setEducationHighlightFadeOpacity(map, 1);
+      map.on("mousemove", onEduTooltipMove);
+      map.on("mouseout", onEduTooltipLeave);
+      attachEducationHoverLayerListeners();
     });
 
     map.once("idle", () => {
@@ -477,6 +584,10 @@
       geocoderControl = null;
     }
     if (map) {
+      map.off("mousemove", onEduTooltipMove);
+      map.off("mouseout", onEduTooltipLeave);
+      detachEducationHoverLayerListeners();
+      setEducationPoiHoverMatch(map, null);
       try {
         removeTerminatorLayer(map);
       } catch {
@@ -494,11 +605,21 @@
   });
 </script>
 
-<div class="wrap">
+<div class="wrap" bind:this={wrapEl}>
   {#if errorMessage}
     <div class="banner" role="alert">{errorMessage}</div>
   {/if}
   <div class="map" bind:this={container}></div>
+  {#if eduTooltipVisible && eduTooltipText}
+    <div
+      class="edu-tooltip"
+      class:edu-tooltip--dark={eduTooltipIsDark}
+      style:left="{eduTooltipLeft}px"
+      style:top="{eduTooltipTop}px"
+    >
+      {eduTooltipText}
+    </div>
+  {/if}
   <div class="left-ui">
     <div class="geocoder-slot" bind:this={geocoderSlot}></div>
     {#if mapLoaded}
@@ -510,7 +631,7 @@
         <button
           type="button"
           class="city-btn"
-          title="Fly to Tbilisi"
+          aria-label="Fly to Tbilisi"
           on:click={flyToTbilisi}
         >
           Tbilisi
@@ -518,7 +639,7 @@
         <button
           type="button"
           class="city-btn"
-          title="Fly to Rustavi"
+          aria-label="Fly to Rustavi"
           on:click={flyToRustavi}
         >
           Rustavi
@@ -542,6 +663,42 @@
   .map {
     position: absolute;
     inset: 0;
+  }
+
+  .edu-tooltip {
+    position: absolute;
+    z-index: 30;
+    pointer-events: none;
+    max-width: min(280px, calc(100vw - 24px));
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.35;
+    font-family:
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      Roboto,
+      sans-serif;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    border: 1px solid rgba(255, 255, 255, 0.38);
+    box-shadow:
+      0 4px 18px rgba(0, 0, 0, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    background: rgba(255, 255, 255, 0.52);
+    color: rgba(22, 22, 24, 0.96);
+  }
+
+  .edu-tooltip--dark {
+    border-color: rgba(255, 255, 255, 0.14);
+    box-shadow:
+      0 4px 20px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    background: rgba(26, 28, 34, 0.62);
+    color: rgba(245, 246, 248, 0.96);
   }
 
   :global(.mapboxgl-ctrl-top-right) {

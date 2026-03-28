@@ -35,6 +35,36 @@ const LAYERS = {
   uniPoiLamp: "edu-poi-uni-lamp",
 };
 
+/** Main geometry only (no halos / glow) — for hover tooltips & hit-testing. */
+export const EDUCATION_TOOLTIP_LAYER_IDS = [
+  LAYERS.schoolBuilding,
+  LAYERS.uniBuilding,
+  LAYERS.kinderBuilding,
+  LAYERS.schoolPoi,
+  LAYERS.uniPoi,
+  LAYERS.kinderPoi,
+  LAYERS.schoolPoiLamp,
+  LAYERS.kinderPoiLamp,
+  LAYERS.uniPoiLamp,
+];
+
+/** 3D fill-extrusion (main only) — queried before POI so footprints register hits. */
+export const EDUCATION_BUILDING_LAYER_IDS = [
+  LAYERS.schoolBuilding,
+  LAYERS.uniBuilding,
+  LAYERS.kinderBuilding,
+];
+
+/** poi_label circles + night lamps — second pass for tooltips / name fallback. */
+export const EDUCATION_POI_TOOLTIP_LAYER_IDS = [
+  LAYERS.schoolPoi,
+  LAYERS.uniPoi,
+  LAYERS.kinderPoi,
+  LAYERS.schoolPoiLamp,
+  LAYERS.kinderPoiLamp,
+  LAYERS.uniPoiLamp,
+];
+
 /** Last basemap lightPreset applied — used when fading highlights after flyTo */
 let lastBasemapLightPreset = "day";
 
@@ -308,6 +338,68 @@ function setExtrusionAmbientOcclusion(map, layerId, on) {
   trySetPaint(map, layerId, "fill-extrusion-ambient-occlusion-ground-radius", on ? 10 : 0);
 }
 
+/** English label used to match building ↔ POI for cross-highlight (stroke boost). */
+let educationPoiHoverMatchName = null;
+
+const EDUCATION_POI_HOVER_STROKE_LAYERS = [
+  LAYERS.schoolPoi,
+  LAYERS.uniPoi,
+  LAYERS.kinderPoi,
+  LAYERS.schoolPoiLamp,
+  LAYERS.kinderPoiLamp,
+  LAYERS.uniPoiLamp,
+];
+
+/**
+ * @param {string} lit
+ * @returns {unknown[]}
+ */
+function nameMatchPaintLiteral(lit) {
+  return [
+    "any",
+    ["==", ["get", "name"], ["literal", lit]],
+    ["==", ["get", "name_en"], ["literal", lit]],
+    ["==", ["get", "name:en"], ["literal", lit]],
+    ["==", ["get", "name:ka"], ["literal", lit]],
+    ["==", ["get", "short_name"], ["literal", lit]],
+  ];
+}
+
+/**
+ * Re-apply POI stroke after sync — keeps hover ring if `educationPoiHoverMatchName` is set.
+ * @param {import('mapbox-gl').Map} map
+ */
+function applyEducationPoiHoverStroke(map) {
+  const low = lastBasemapLightPreset === "dusk" || lastBasemapLightPreset === "night";
+  const baseStroke = low ? 3 : 2;
+  const hiStroke = baseStroke + 4;
+  const match = educationPoiHoverMatchName;
+  for (const id of EDUCATION_POI_HOVER_STROKE_LAYERS) {
+    if (!map.getLayer(id)) continue;
+    if (match) {
+      map.setPaintProperty(id, "circle-stroke-width", [
+        "case",
+        nameMatchPaintLiteral(match),
+        hiStroke,
+        baseStroke,
+      ]);
+    } else {
+      map.setPaintProperty(id, "circle-stroke-width", baseStroke);
+    }
+  }
+}
+
+/**
+ * Cross-highlight POI circles when hovering the matching 3D footprint (or POI with same English label).
+ * @param {import('mapbox-gl').Map} map
+ * @param {string | null} englishName
+ */
+export function setEducationPoiHoverMatch(map, englishName) {
+  educationPoiHoverMatchName =
+    englishName && String(englishName).trim() ? String(englishName).trim() : null;
+  applyEducationPoiHoverStroke(map);
+}
+
 /**
  * Sync school/kinder 3D highlights with basemap light preset (dusk/night = neon + AO + glow).
  * @param {import('mapbox-gl').Map} map
@@ -575,6 +667,8 @@ export function syncEducationExtrusionNightStyle(map, preset) {
   applyPoiLampNight(LAYERS.schoolPoiLamp, NIGHT_PALETTE.school.fill);
   applyPoiLampNight(LAYERS.kinderPoiLamp, NIGHT_PALETTE.kinder.fill);
   applyPoiLampNight(LAYERS.uniPoiLamp, NIGHT_PALETTE.uni.fill);
+
+  applyEducationPoiHoverStroke(map);
 }
 
 function symbolBeforeId(map) {

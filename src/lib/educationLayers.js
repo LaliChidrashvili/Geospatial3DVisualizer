@@ -1,6 +1,6 @@
 /**
  * Education highlights — Mapbox Standard + mapbox-streets-v8.
- * მხოლოდ `building` fill-extrusion (poi წრეები აღარ გამოიყენება).
+ * Only `building` fill-extrusion (no POI circles).
  */
 
 export const SOURCE_ID = "streets-education-highlight";
@@ -17,7 +17,7 @@ const LAYERS = {
   kinderBuilding: "edu-highlight-bldg-kinder",
 };
 
-/** building: ბაღი / საბავშვო */
+/** Kindergarten / preschool building footprint */
 const FILTER_KINDER_BUILDING = [
   "any",
   ["==", ["get", "class"], "kindergarten"],
@@ -26,8 +26,8 @@ const FILTER_KINDER_BUILDING = [
 ];
 
 /**
- * სკოლა: school / education კლასები, მაგრამ არა უნივერსიტეტი/კოლეჯი
- * (class=education ხშირად ერთდება უნივერსიტეტს — უნდა გამოვრიცხოთ type-ით).
+ * Schools: type/class school or class education, but exclude university/college
+ * (class=education often tags universities — exclude by type).
  */
 const FILTER_SCHOOL_BUILDING = [
   "all",
@@ -40,7 +40,7 @@ const FILTER_SCHOOL_BUILDING = [
   ["!", ["in", ["get", "type"], ["literal", ["university", "college"]]]],
 ];
 
-/** უნივერსიტეტი — მხოლოდ type=university */
+/** Universities: type=university only */
 const FILTER_UNI_BUILDING = ["==", ["get", "type"], "university"];
 
 function roofHeightExpr() {

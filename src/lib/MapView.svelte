@@ -1,3 +1,6 @@
+<!--
+  Map logic (pitch/zoom, etc.) lives here; there is no MapComponent.svelte in this project.
+-->
 <script>
   import { onMount, onDestroy } from "svelte";
   import mapboxgl from "mapbox-gl";
@@ -127,18 +130,39 @@
     }
     geocoderControl = geocoder;
 
-    // Globe ↔ Mercator transition at high pitch visually shifts the globe; reset pitch/bearing during
-    // zoom (not only on zoomend), before zoom is low enough for the globe to appear.
-    const PITCH_ZOOM_CUTOFF = 8;
+    /** Below this zoom, pitch/bearing stay 0 so the globe stays centered. */
+    const Z_GLOBE = 5;
+    /** Above this zoom, apply 3D tilt (buildings, shadows). */
+    const Z_TILT = 13;
+    /** For z in (Z_TILT, Z_TILT + RAMP), ease pitch/bearing from 0° toward HIGH_* (smooth ramp). */
+    const TILT_RAMP = 1;
     const HIGH_PITCH = 45;
     const HIGH_BEARING = -25;
+
+    /**
+     * @returns {{ pitch: number; bearing: number }}
+     */
+    function targetPitchBearingForZoom(z) {
+      if (z < Z_GLOBE) {
+        return { pitch: 0, bearing: 0 };
+      }
+      if (z <= Z_TILT) {
+        return { pitch: 0, bearing: 0 };
+      }
+      if (z >= Z_TILT + TILT_RAMP) {
+        return { pitch: HIGH_PITCH, bearing: HIGH_BEARING };
+      }
+      const t = (z - Z_TILT) / TILT_RAMP;
+      return {
+        pitch: HIGH_PITCH * t,
+        bearing: HIGH_BEARING * t,
+      };
+    }
 
     function syncPitchBearingToZoom() {
       if (skipPitchSyncForSearch) return;
       const z = map.getZoom();
-      const low = z < PITCH_ZOOM_CUTOFF;
-      const tp = low ? 0 : HIGH_PITCH;
-      const tb = low ? 0 : HIGH_BEARING;
+      const { pitch: tp, bearing: tb } = targetPitchBearingForZoom(z);
       if (Math.abs(map.getPitch() - tp) > 0.01) map.setPitch(tp);
       if (Math.abs(map.getBearing() - tb) > 0.01) map.setBearing(tb);
     }

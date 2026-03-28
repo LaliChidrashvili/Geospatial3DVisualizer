@@ -36,6 +36,31 @@
   /** When true, use Mercator only (flat map); no globe — stable centering, no 3D globe view. */
   const USE_FLAT_MAP_ONLY = false;
 
+  const SEARCH_FLY_ZOOM = 17;
+  const SEARCH_FLY_PITCH = 45;
+  const SEARCH_FLY_BEARING = -25;
+
+  /**
+   * @param {Record<string, unknown> & { geometry?: GeoJSON.Geometry }} f Geocoder result feature
+   * @returns {[number, number] | null}
+   */
+  function centerFromGeocoderResult(f) {
+    const c = f.center;
+    if (Array.isArray(c) && c.length >= 2) {
+      return [Number(c[0]), Number(c[1])];
+    }
+    const g = f.geometry;
+    if (g && g.type === "Point" && Array.isArray(g.coordinates)) {
+      const [lng, lat] = g.coordinates;
+      return [Number(lng), Number(lat)];
+    }
+    const b = f.bbox;
+    if (Array.isArray(b) && b.length >= 4) {
+      return [(Number(b[0]) + Number(b[2])) / 2, (Number(b[1]) + Number(b[3])) / 2];
+    }
+    return null;
+  }
+
   onMount(() => {
     if (!token) {
       errorMessage =
@@ -69,13 +94,16 @@
       accessToken: mapboxgl.accessToken,
       mapboxgl: mapboxgl,
       marker: false,
-      placeholder: "Search city or place",
-      types: "place,locality,region",
+      placeholder: "Search (e.g. Bob Walsh Street, Tbilisi)",
+      types: "address,poi,place",
+      countries: "ge",
+      proximity: "ip",
+      // Keep fixed IP biasing for Georgia; do not override with map center
+      trackProximity: false,
+      limit: 10,
       language: geocoderLanguage,
       // Default is 2 — show suggestions from the first character
       minLength: 1,
-      // Do not bias results to current map center — needed for globe / zoomed-out views
-      trackProximity: false,
       flyTo: false,
     });
 
@@ -91,37 +119,22 @@
       skipPitchSyncForSearch = true;
       map.once("moveend", finishSearchNavigation);
 
-      const bbox = f.bbox;
-      if (bbox && bbox.length >= 4) {
-        map.fitBounds(
-          [
-            [bbox[0], bbox[1]],
-            [bbox[2], bbox[3]],
-          ],
-          {
-            pitch: 45,
-            bearing: -25,
-            duration: 2200,
-            padding: 52,
-            essential: true,
-            maxZoom: 15,
-          }
-        );
-      } else {
-        const c = f.center || f.geometry?.coordinates;
-        if (c) {
-          map.flyTo({
-            center: c,
-            zoom: 14,
-            pitch: 45,
-            bearing: -25,
-            duration: 2200,
-            essential: true,
-          });
-        } else {
-          finishSearchNavigation();
-        }
+      const center = centerFromGeocoderResult(
+        /** @type {Record<string, unknown> & { geometry?: GeoJSON.Geometry }} */ (f)
+      );
+      if (!center) {
+        finishSearchNavigation();
+        return;
       }
+
+      map.flyTo({
+        center,
+        zoom: SEARCH_FLY_ZOOM,
+        pitch: SEARCH_FLY_PITCH,
+        bearing: SEARCH_FLY_BEARING,
+        duration: 2200,
+        essential: true,
+      });
     });
 
     const geocoderEl = geocoder.onAdd(map);
@@ -130,16 +143,17 @@
     }
     geocoderControl = geocoder;
 
-    /** Below this zoom, pitch/bearing stay 0 so the globe stays centered. */
+    /** Globe: pitch/bearing 0 when zoom < this (keeps globe centered). */
     const Z_GLOBE = 5;
-    /** Above this zoom, apply 3D tilt (buildings, shadows). */
+    /** City / street: tilt starts when zoom > this (see TILT_RAMP for smooth blend to 45°). */
     const Z_TILT = 13;
-    /** For z in (Z_TILT, Z_TILT + RAMP), ease pitch/bearing from 0° toward HIGH_* (smooth ramp). */
+    /** Smooth ramp from flat to HIGH_* for z in (Z_TILT, Z_TILT + RAMP]. */
     const TILT_RAMP = 1;
     const HIGH_PITCH = 45;
     const HIGH_BEARING = -25;
 
     /**
+     * zoom < Z_GLOBE → flat (globe). zoom > Z_TILT → tilt toward 45° / city bearing (with ramp).
      * @returns {{ pitch: number; bearing: number }}
      */
     function targetPitchBearingForZoom(z) {

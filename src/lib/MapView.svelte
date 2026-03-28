@@ -9,7 +9,21 @@
   import "@mapbox/mapbox-gl-geocoder/lib/mapbox-gl-geocoder.css";
   import { DateTime } from "luxon";
   import tzlookup from "tz-lookup";
+  import SunCalc from "suncalc";
   import EducationFiltersOverlay from "./EducationFiltersOverlay.svelte";
+  import {
+    GLOBE_LIGHT_ZOOM,
+    applyGlobeFog,
+    applyGlobeSunLights,
+    restoreStyleFogAndLights,
+  } from "./mapGlobeLighting.js";
+  import {
+    TERMINATOR_OVERLAY_MAX_ZOOM,
+    ensureTerminatorLayer,
+    removeTerminatorLayer,
+    setTerminatorVisibility,
+    updateTerminatorOverlay,
+  } from "./terminatorRaster.js";
   import {
     ensureEducationLayers,
     setEducationVisibility,
@@ -72,10 +86,6 @@
   /** How often to re-apply lighting if the app stays open across time-of-day boundaries */
   const BASEMAP_LIGHTING_INTERVAL_MS = 60 * 1000;
 
-  /**
-   * Mapbox Standard `basemap.lightPreset` from local civil hour at the viewed area (0–23).
-   * dawn: 06–11, day: 11–18, dusk: 18–21, night: 21–06
-   */
   function basemapLightPresetForHour(hour) {
     if (hour >= 6 && hour < 11) return "dawn";
     if (hour >= 11 && hour < 18) return "day";
@@ -83,11 +93,6 @@
     return "night";
   }
 
-  /**
-   * IANA zone from coordinates, then current hour in that zone (Luxon).
-   * @param {number} lat
-   * @param {number} lng
-   */
   function localHourAtLngLat(lat, lng) {
     let zone = "UTC";
     try {
@@ -99,30 +104,74 @@
   }
 
   /**
-   * @param {import('mapbox-gl').Map} m
+   * Four Standard presets from solar geometry at map center (UTC).
+   * @param {number} lat
+   * @param {number} lng
+   * @param {Date} [date]
    */
-  function localHourAtMapViewCenter(m) {
-    const c = m.getCenter();
-    return localHourAtLngLat(c.lat, c.lng);
+  function basemapLightPresetForSolar(lat, lng, date = new Date()) {
+    try {
+      const pos = SunCalc.getPosition(date, lat, lng);
+      const altDeg = (pos.altitude * 180) / Math.PI;
+      if (!Number.isFinite(altDeg)) {
+        return basemapLightPresetForHour(localHourAtLngLat(lat, lng));
+      }
+      const times = SunCalc.getTimes(date, lat, lng);
+      const noonMs = times.solarNoon.getTime();
+      if (!Number.isFinite(noonMs)) {
+        return basemapLightPresetForHour(localHourAtLngLat(lat, lng));
+      }
+      const beforeNoon = date.getTime() < noonMs;
+      if (altDeg > 8) return "day";
+      if (altDeg > 0) return beforeNoon ? "dawn" : "dusk";
+      if (altDeg > -6) return beforeNoon ? "dawn" : "dusk";
+      return "night";
+    } catch {
+      return basemapLightPresetForHour(localHourAtLngLat(lat, lng));
+    }
   }
 
   /**
-   * Real-time lighting for 3D buildings / shadows; POI labels follow the preset.
-   * Uses the map center’s timezone (not the browser’s local clock).
+   * Basemap config, optional globe lights/fog, raster day/night overlay on sphere/world.
    * @param {import('mapbox-gl').Map} m
+   * @param {import('mapbox-gl').FogSpecification | undefined} fogBackup
+   * @param {Array<import('mapbox-gl').LightsSpecification> | undefined} lightsBackup
    */
-  function applyDynamicBasemapLighting(m) {
+  function updateMapLight(m, fogBackup, lightsBackup) {
     if (!m || typeof m.setConfigProperty !== "function") return;
-    const preset = basemapLightPresetForHour(localHourAtMapViewCenter(m));
+    const c = m.getCenter();
+    const now = new Date();
+    const preset = basemapLightPresetForSolar(c.lat, c.lng, now);
+    const z = m.getZoom();
     const presetChangedForHighlights =
       mapLoaded && preset !== previousEduLightPreset;
+
     try {
       m.setConfigProperty("basemap", "lightPreset", preset);
       m.setConfigProperty("basemap", "show3dObjects", true);
       m.setConfigProperty("basemap", "showPointOfInterestLabels", true);
+      try {
+        m.setConfigProperty("basemap", "showPlaceLabels", true);
+      } catch {
+        /* optional */
+      }
     } catch (e) {
       console.warn("Basemap lighting", e);
     }
+
+    if (z < GLOBE_LIGHT_ZOOM) {
+      applyGlobeFog(m, preset);
+      applyGlobeSunLights(m, now, preset, c.lat, c.lng);
+    } else {
+      restoreStyleFogAndLights(m, fogBackup, lightsBackup);
+    }
+
+    const showTerminator = z <= TERMINATOR_OVERLAY_MAX_ZOOM;
+    setTerminatorVisibility(m, showTerminator);
+    if (showTerminator) {
+      updateTerminatorOverlay(m, now);
+    }
+
     syncEducationExtrusionNightStyle(m, preset);
     if (presetChangedForHighlights) {
       setEducationHighlightFadeOpacity(m, 1);
@@ -160,8 +209,16 @@
 
     mapboxgl.accessToken = token;
 
-    const initialLightPreset = basemapLightPresetForHour(
-      localHourAtLngLat(INITIAL_CENTER[1], INITIAL_CENTER[0])
+    const initialLightPreset = basemapLightPresetForSolar(
+      INITIAL_CENTER[1],
+      INITIAL_CENTER[0]
+    );
+
+    let styleFogBackup = /** @type {import('mapbox-gl').FogSpecification | undefined} */ (
+      undefined
+    );
+    let styleLightsBackup = /** @type {Array<import('mapbox-gl').LightsSpecification> | undefined} */ (
+      undefined
     );
 
     // Mapbox Standard has no legacy "composite" source; 3D objects use Standard style config.
@@ -178,6 +235,8 @@
         basemap: {
           show3dObjects: true,
           lightPreset: initialLightPreset,
+          showPointOfInterestLabels: true,
+          showPlaceLabels: true,
         },
       },
     });
@@ -236,32 +295,26 @@
     }
     geocoderControl = geocoder;
 
-    /** Globe: pitch/bearing 0 when zoom < this (keeps globe centered). */
     const Z_GLOBE = 5;
-    /** City / street: tilt starts when zoom > this (see TILT_RAMP for smooth blend to 45°). */
-    const Z_TILT = 13;
-    /** Smooth ramp from flat to HIGH_* for z in (Z_TILT, Z_TILT + RAMP]. */
-    const TILT_RAMP = 1;
-    const HIGH_PITCH = 55;
+    const Z_TILT_START = 13;
+    const Z_TILT_FULL = 17;
+    const PITCH_3D_MIN = 45;
+    const PITCH_3D_MAX = 55;
     const HIGH_BEARING = -25;
 
-    /**
-     * zoom < Z_GLOBE → flat (globe). zoom > Z_TILT → tilt toward 45° / city bearing (with ramp).
-     * @returns {{ pitch: number; bearing: number }}
-     */
     function targetPitchBearingForZoom(z) {
       if (z < Z_GLOBE) {
         return { pitch: 0, bearing: 0 };
       }
-      if (z <= Z_TILT) {
+      if (z <= Z_TILT_START) {
         return { pitch: 0, bearing: 0 };
       }
-      if (z >= Z_TILT + TILT_RAMP) {
-        return { pitch: HIGH_PITCH, bearing: HIGH_BEARING };
-      }
-      const t = (z - Z_TILT) / TILT_RAMP;
+      const t = Math.min(
+        1,
+        Math.max(0, (z - Z_TILT_START) / (Z_TILT_FULL - Z_TILT_START))
+      );
       return {
-        pitch: HIGH_PITCH * t,
+        pitch: PITCH_3D_MIN + t * (PITCH_3D_MAX - PITCH_3D_MIN),
         bearing: HIGH_BEARING * t,
       };
     }
@@ -350,6 +403,17 @@
     map.on("load", () => {
       map.resize();
       try {
+        styleFogBackup = map.getFog() ?? undefined;
+        styleLightsBackup = map.getLights() ?? undefined;
+      } catch {
+        /* ignore */
+      }
+      try {
+        ensureTerminatorLayer(map);
+      } catch (e) {
+        console.warn("Terminator overlay", e);
+      }
+      try {
         ensureEducationLayers(map);
         setEducationVisibility(map, {
           schools: false,
@@ -359,12 +423,12 @@
       } catch (e) {
         console.warn("Education highlight layers", e);
       }
-      applyDynamicBasemapLighting(map);
+      updateMapLight(map, styleFogBackup, styleLightsBackup);
       if (basemapLightingIntervalId !== undefined) {
         clearInterval(basemapLightingIntervalId);
       }
       basemapLightingIntervalId = setInterval(
-        () => applyDynamicBasemapLighting(map),
+        () => updateMapLight(map, styleFogBackup, styleLightsBackup),
         BASEMAP_LIGHTING_INTERVAL_MS
       );
       mapLoaded = true;
@@ -376,10 +440,13 @@
     });
 
     map.on("zoom", scheduleSyncPitchBearing);
-    map.on("zoomend", syncPitchBearingToZoom);
+    map.on("zoomend", () => {
+      syncPitchBearingToZoom();
+      updateMapLight(map, styleFogBackup, styleLightsBackup);
+    });
 
     map.on("moveend", () => {
-      applyDynamicBasemapLighting(map);
+      updateMapLight(map, styleFogBackup, styleLightsBackup);
     });
 
     map.on("error", (e) => {
@@ -410,6 +477,11 @@
       geocoderControl = null;
     }
     if (map) {
+      try {
+        removeTerminatorLayer(map);
+      } catch {
+        /* ignore */
+      }
       try {
         removeEducationLayers(map);
       } catch {

@@ -4,8 +4,9 @@ An interactive 3D map application built with **Svelte** and **Mapbox GL JS**. Th
 
 ## 📸 Showcase
 
-![Project Demo](https://github.com/LaliChidrashvili/Geospatial3DVisualizer/blob/main/Screenshot%202026-03-28%20at%2018.51.13.jpg?raw=true)
-*Tbilisi in 3D Night Mode with illuminated schools and kindergartens.*
+<img width="1438" height="777" alt="Screenshot 2026-03-28 at 19 45 26" src="https://github.com/user-attachments/assets/bd5567ee-08cb-43c5-a180-82581d307ad7" />
+
+*Rustavi in 3D Night Mode with illuminated schools and kindergartens.*
 
 ## ✨ Key Features
 
@@ -43,3 +44,7 @@ An interactive 3D map application built with **Svelte** and **Mapbox GL JS**. Th
 
 ## 📜 License
 This project is licensed under the MIT License.
+
+<img width="1439" height="776" alt="Screenshot 2026-03-28 at 19 46 10" src="https://github.com/user-attachments/assets/1d41d042-8182-46cb-99fe-8ba64503c3f8" />
+
+

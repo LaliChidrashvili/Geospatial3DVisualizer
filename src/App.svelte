@@ -1,9 +1,11 @@
 <script>
   import MapView from "$lib/MapView.svelte";
+
+  let searchQuery = "";
 </script>
 
 <main class="shell">
-  <MapView />
+  <MapView bind:searchQuery />
 </main>
 
 <style>

@@ -34,6 +34,8 @@
     syncEducationExtrusionNightStyle,
   } from "./educationLayers.js";
 
+  export let searchQuery = "";
+
   let container;
   /** @type {HTMLDivElement | undefined} */
   let wrapEl;
@@ -42,7 +44,7 @@
   let map;
   let errorMessage = "";
   let syncPitchRaf = 0;
-  /** @type {unknown} */
+  /** @type {InstanceType<typeof MapboxGeocoder> | null} */
   let geocoderControl = null;
   /** While true, skip auto pitch/bearing sync so flyTo / city animations are not overwritten */
   let skipPitchSyncForSearch = false;
@@ -93,7 +95,6 @@
     return "";
   }
 
-  /** Tooltip + stroke highlight მხოლოდ POI წრეებზე — შენობაზე „უახლოესი“ POI სხვა სკოლის სახელს შეიძლება აიღოს. */
   function onEduTooltipMove(/** @type {import('mapbox-gl').MapMouseEvent} */ e) {
     if (!mapLoaded || !map || !wrapEl) return;
     const pIds = EDUCATION_POI_TOOLTIP_LAYER_IDS.filter((id) => map.getLayer(id));
@@ -186,6 +187,9 @@
   const INITIAL_PITCH = 55;
   /** Slight leftward map rotation (matches typical 3D street framing). */
   const INITIAL_BEARING = -12;
+
+  const CITY_SEARCH_LABEL_TBILISI = "Tbilisi";
+  const CITY_SEARCH_LABEL_RUSTAVI = "Rustavi";
 
   /** How often to re-apply lighting if the app stays open across time-of-day boundaries */
   const BASEMAP_LIGHTING_INTERVAL_MS = 60 * 1000;
@@ -368,9 +372,25 @@
       syncPitchBearingToZoom();
     }
 
+    /**
+     * @param {string} text
+     */
+    function syncGeocoderInput(text) {
+      searchQuery = text;
+      geocoder.setInput(text);
+    }
+
     geocoder.on("result", (e) => {
       const f = e.result;
       if (!f) return;
+
+      const label =
+        typeof f.place_name === "string"
+          ? f.place_name
+          : typeof f.text === "string"
+            ? f.text
+            : "";
+      if (label) searchQuery = label;
 
       skipPitchSyncForSearch = true;
       map.once("moveend", finishSearchNavigation);
@@ -391,6 +411,11 @@
         duration: 2200,
         essential: true,
       });
+    });
+
+    geocoder.on("clear", () => {
+      searchQuery = "";
+      finishSearchNavigation();
     });
 
     const geocoderEl = geocoder.onAdd(map);
@@ -493,7 +518,8 @@
       });
     }
 
-    flyToTbilisi = () =>
+    flyToTbilisi = () => {
+      syncGeocoderInput(CITY_SEARCH_LABEL_TBILISI);
       flyToCity({
         center: [44.793, 41.715],
         zoom: 16.5,
@@ -502,8 +528,10 @@
         duration: 3000,
         essential: true,
       });
+    };
 
-    flyToRustavi = () =>
+    flyToRustavi = () => {
+      syncGeocoderInput(CITY_SEARCH_LABEL_RUSTAVI);
       flyToCity({
         center: INITIAL_CENTER,
         zoom: INITIAL_ZOOM,
@@ -512,6 +540,7 @@
         duration: 3000,
         essential: true,
       });
+    };
 
     map.on("load", () => {
       map.resize();

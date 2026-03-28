@@ -1,4 +1,4 @@
-<img width="1438" height="777" alt="Screenshot 2026-03-28 at 19 45 26" src="https://github.com/user-attachments/assets/2f856d2d-34f1-43e2-8546-98ed9cfde259" /># 🌍 Geospatial 3D Visualizer
+# 🌍 Geospatial 3D Visualizer
 
 An interactive 3D map application built with **Svelte** and **Mapbox GL JS**. This project visualizes urban infrastructure and educational institutions with dynamic environmental effects.
 

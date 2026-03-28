@@ -48,13 +48,14 @@
       style: "mapbox://styles/mapbox/standard",
       center: [44.8271, 41.7151],
       zoom: 15.5,
-      pitch: 65,
+      pitch: 45,
       bearing: -25,
       antialias: true,
       ...(USE_FLAT_MAP_ONLY ? { projection: "mercator" } : {}),
       config: {
         basemap: {
           show3dObjects: true,
+          lightPreset: "day",
         },
       },
     });
@@ -95,7 +96,7 @@
             [bbox[2], bbox[3]],
           ],
           {
-            pitch: 65,
+            pitch: 45,
             bearing: -25,
             duration: 2200,
             padding: 52,
@@ -109,7 +110,7 @@
           map.flyTo({
             center: c,
             zoom: 14,
-            pitch: 65,
+            pitch: 45,
             bearing: -25,
             duration: 2200,
             essential: true,
@@ -129,7 +130,7 @@
     // Globe ↔ Mercator transition at high pitch visually shifts the globe; reset pitch/bearing during
     // zoom (not only on zoomend), before zoom is low enough for the globe to appear.
     const PITCH_ZOOM_CUTOFF = 8;
-    const HIGH_PITCH = 65;
+    const HIGH_PITCH = 45;
     const HIGH_BEARING = -25;
 
     function syncPitchBearingToZoom() {
@@ -155,6 +156,7 @@
       if (typeof map.setConfigProperty === "function") {
         try {
           map.setConfigProperty("basemap", "show3dObjects", true);
+          map.setConfigProperty("basemap", "lightPreset", "day");
         } catch (e) {
           console.warn(e);
         }

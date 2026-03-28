@@ -1,41 +1,46 @@
 /**
- * Education highlights — mapbox-streets-v8.
- * No landuse=school fill: it paints whole campuses and covers universities on shared grounds.
- * Uses building footprints: type=school vs type=university (Mapbox OSM-derived).
+ * Education highlights on Mapbox Standard: 3D fill-extrusion "caps" on building footprints
+ * (mapbox-streets-v8 building layer). POI circles removed — only buildings.
+ * Caps sit on roof height from tile data so Standard's grey 3D mass stays below; color shows category.
  */
 
 export const SOURCE_ID = "streets-education-highlight";
+
+/** Default building height (m) when the tile has no height property */
+export const DEFAULT_BUILDING_HEIGHT_M = 15;
+
+/** Extra meters above roof for highlighted education buildings (vs grey Standard extrusion) */
+const HIGHLIGHT_ROOF_CAP_M = 6;
 
 const LAYERS = {
   schoolBuilding: "edu-highlight-bldg-school",
   uniBuilding: "edu-highlight-bldg-university",
   kinderBuilding: "edu-highlight-bldg-kinder",
-  schoolPoi: "edu-highlight-school-poi",
-  kinderPoi: "edu-highlight-kinder-poi",
-  uniPoi: "edu-highlight-uni-poi",
 };
 
-/** Kindergarten POI: type / category_en */
-const KINDERGARTEN_FILTER = [
-  "any",
-  ["==", ["get", "type"], "kindergarten"],
-  ["==", ["get", "type"], "childcare"],
-  [
-    "in",
-    ["get", "category_en"],
-    [
-      "literal",
-      [
-        "Kindergarten",
-        "kindergarten",
-        "Preschool",
-        "preschool",
-        "Nursery",
-        "nursery",
-      ],
-    ],
-  ],
-];
+/**
+ * Roof elevation (m) from ground — matches Mapbox Streets building `height`.
+ * @returns {import('mapbox-gl').ExpressionSpecification}
+ */
+function roofHeightExpr() {
+  return ["coalesce", ["get", "height"], DEFAULT_BUILDING_HEIGHT_M];
+}
+
+/**
+ * Extrusion from roof to roof+cap (colored highlight on top of Standard 3D buildings).
+ * @param {import('mapbox-gl').Map} map
+ * @param {string} layerId
+ */
+function applyExtrusionHeightFromData(map, layerId) {
+  if (!map.getLayer(layerId)) return;
+  const roof = roofHeightExpr();
+  map.setPaintProperty(layerId, "fill-extrusion-base", roof);
+  map.setPaintProperty(
+    layerId,
+    "fill-extrusion-height",
+    ["+", roof, HIGHLIGHT_ROOF_CAP_M]
+  );
+}
 
 function symbolBeforeId(map) {
   const layers = map.getStyle()?.layers ?? [];
@@ -52,171 +57,87 @@ export function ensureEducationLayers(map) {
 
   const beforeId = symbolBeforeId(map);
 
-  // K–12 / general school buildings (not landuse — avoids coloring uni campuses yellow)
   if (!map.getLayer(LAYERS.schoolBuilding)) {
     map.addLayer(
       {
         id: LAYERS.schoolBuilding,
-        type: "fill",
+        type: "fill-extrusion",
         source: SOURCE_ID,
         "source-layer": "building",
         filter: ["==", ["get", "type"], "school"],
         minzoom: 13,
         layout: { visibility: "none" },
         paint: {
-          "fill-color": "#ffeb3b",
-          "fill-opacity": 0.42,
-          "fill-outline-color": "#f9a825",
+          "fill-extrusion-color": "#ffeb3b",
+          "fill-extrusion-opacity": 0.92,
+          "fill-extrusion-base": roofHeightExpr(),
+          "fill-extrusion-height": [
+            "+",
+            roofHeightExpr(),
+            HIGHLIGHT_ROOF_CAP_M,
+          ],
         },
       },
       beforeId
     );
+    applyExtrusionHeightFromData(map, LAYERS.schoolBuilding);
   }
 
-  // University buildings — blue footprint (separate from school landuse)
   if (!map.getLayer(LAYERS.uniBuilding)) {
     map.addLayer(
       {
         id: LAYERS.uniBuilding,
-        type: "fill",
+        type: "fill-extrusion",
         source: SOURCE_ID,
         "source-layer": "building",
         filter: ["==", ["get", "type"], "university"],
         minzoom: 13,
         layout: { visibility: "none" },
         paint: {
-          "fill-color": "#2196f3",
-          "fill-opacity": 0.45,
-          "fill-outline-color": "#1565c0",
+          "fill-extrusion-color": "#2196f3",
+          "fill-extrusion-opacity": 0.92,
+          "fill-extrusion-base": roofHeightExpr(),
+          "fill-extrusion-height": [
+            "+",
+            roofHeightExpr(),
+            HIGHLIGHT_ROOF_CAP_M,
+          ],
         },
       },
       beforeId
     );
+    applyExtrusionHeightFromData(map, LAYERS.uniBuilding);
   }
 
-  // Kindergarten: many OSM buildings use building=school; show orange footprint when only Kindergartens is on (see setEducationVisibility)
   if (!map.getLayer(LAYERS.kinderBuilding)) {
     map.addLayer(
       {
         id: LAYERS.kinderBuilding,
-        type: "fill",
+        type: "fill-extrusion",
         source: SOURCE_ID,
         "source-layer": "building",
-        filter: ["==", ["get", "type"], "school"],
+        filter: [
+          "any",
+          ["==", ["get", "type"], "school"],
+          ["==", ["get", "type"], "kindergarten"],
+          ["==", ["get", "type"], "childcare"],
+        ],
         minzoom: 13,
         layout: { visibility: "none" },
         paint: {
-          "fill-color": "#ff9800",
-          "fill-opacity": 0.48,
-          "fill-outline-color": "#e65100",
-        },
-      },
-      beforeId
-    );
-  }
-
-  if (!map.getLayer(LAYERS.schoolPoi)) {
-    map.addLayer(
-      {
-        id: LAYERS.schoolPoi,
-        type: "circle",
-        source: SOURCE_ID,
-        "source-layer": "poi_label",
-        filter: [
-          "all",
-          ["==", ["get", "maki"], "school"],
-          ["!", KINDERGARTEN_FILTER],
-        ],
-        minzoom: 8,
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            8,
-            4,
-            14,
-            11,
-            18,
-            14,
+          "fill-extrusion-color": "#ff9800",
+          "fill-extrusion-opacity": 0.92,
+          "fill-extrusion-base": roofHeightExpr(),
+          "fill-extrusion-height": [
+            "+",
+            roofHeightExpr(),
+            HIGHLIGHT_ROOF_CAP_M,
           ],
-          "circle-color": "#ffeb3b",
-          "circle-opacity": 0.85,
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#fffde7",
         },
       },
       beforeId
     );
-  }
-
-  if (!map.getLayer(LAYERS.kinderPoi)) {
-    map.addLayer(
-      {
-        id: LAYERS.kinderPoi,
-        type: "circle",
-        source: SOURCE_ID,
-        "source-layer": "poi_label",
-        filter: ["all", ["==", ["get", "maki"], "school"], KINDERGARTEN_FILTER],
-        minzoom: 8,
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            8,
-            7,
-            14,
-            14,
-            18,
-            18,
-          ],
-          "circle-color": "#ff9800",
-          "circle-opacity": 0.9,
-          "circle-stroke-width": 2.5,
-          "circle-stroke-color": "#fff3e0",
-        },
-      },
-      beforeId
-    );
-  }
-
-  if (!map.getLayer(LAYERS.uniPoi)) {
-    map.addLayer(
-      {
-        id: LAYERS.uniPoi,
-        type: "circle",
-        source: SOURCE_ID,
-        "source-layer": "poi_label",
-        filter: [
-          "in",
-          ["get", "maki"],
-          ["literal", ["college", "university"]],
-        ],
-        minzoom: 8,
-        layout: { visibility: "none" },
-        paint: {
-          "circle-radius": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            8,
-            5,
-            14,
-            14,
-            18,
-            18,
-          ],
-          "circle-color": "#2196f3",
-          "circle-opacity": 0.9,
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#e3f2fd",
-        },
-      },
-      beforeId
-    );
+    applyExtrusionHeightFromData(map, LAYERS.kinderBuilding);
   }
 }
 
@@ -229,15 +150,14 @@ export function setEducationVisibility(map, v) {
 
   const { schools, kindergartens, universities } = v;
 
-  // School-type building fill: yellow when Schools on; orange when only Kindergartens (footprint for ბაღები without painting unis)
   if (map.getLayer(LAYERS.schoolBuilding)) {
-    const showYellowSchoolBldg = schools;
     map.setLayoutProperty(
       LAYERS.schoolBuilding,
       "visibility",
-      vis(showYellowSchoolBldg)
+      vis(schools)
     );
   }
+
   if (map.getLayer(LAYERS.kinderBuilding)) {
     const showOrangeKinderBldg = kindergartens && !schools;
     map.setLayoutProperty(
@@ -249,15 +169,6 @@ export function setEducationVisibility(map, v) {
 
   if (map.getLayer(LAYERS.uniBuilding)) {
     map.setLayoutProperty(LAYERS.uniBuilding, "visibility", vis(universities));
-  }
-  if (map.getLayer(LAYERS.schoolPoi)) {
-    map.setLayoutProperty(LAYERS.schoolPoi, "visibility", vis(schools));
-  }
-  if (map.getLayer(LAYERS.kinderPoi)) {
-    map.setLayoutProperty(LAYERS.kinderPoi, "visibility", vis(kindergartens));
-  }
-  if (map.getLayer(LAYERS.uniPoi)) {
-    map.setLayoutProperty(LAYERS.uniPoi, "visibility", vis(universities));
   }
 }
 

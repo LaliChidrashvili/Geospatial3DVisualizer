@@ -61,7 +61,7 @@
 
   /**
    * Initial camera — Rustavi, Zakaria Paliashvili area near Public Service Hall
-   * (OSM: ~41.55593, 44.98404) so the street and იუსტიციის სახლი vicinity match the app screenshot.
+   * (OSM: ~41.55593, 44.98404) so the street and Justice House vicinity match the app screenshot.
    */
   const INITIAL_CENTER = /** @type {[number, number]} */ ([44.9840431, 41.5559346]);
   const INITIAL_ZOOM = 16.5;
@@ -438,18 +438,18 @@
         <button
           type="button"
           class="city-btn"
-          title="გადაფრინდი თბილისში"
+          title="Fly to Tbilisi"
           on:click={flyToTbilisi}
         >
-          თბილისი
+          Tbilisi
         </button>
         <button
           type="button"
           class="city-btn"
-          title="გადაფრინდი რუსთავში"
+          title="Fly to Rustavi"
           on:click={flyToRustavi}
         >
-          რუსთავი
+          Rustavi
         </button>
       </div>
       <div class="filters-overlay">

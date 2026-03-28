@@ -2,10 +2,7 @@
   import MapView from "$lib/MapView.svelte";
 </script>
 
-<main
-  class="shell"
-  title="Geospatial 3D Visualizer — use the map search and city buttons (native tooltips on hover)"
->
+<main class="shell">
   <MapView />
 </main>
 

@@ -6,19 +6,23 @@
   let container;
   let map;
   let errorMessage = "";
+  let syncPitchRaf = 0;
 
   const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+  /** When true, use Mercator only (flat map); no globe — stable centering, no 3D globe view. */
+  const USE_FLAT_MAP_ONLY = false;
 
   onMount(() => {
     if (!token) {
       errorMessage =
-        "დააყენე VITE_MAPBOX_ACCESS_TOKEN პროექტის ფესვში .env ფაილში (Mapbox-ის public token).";
+        "Set VITE_MAPBOX_ACCESS_TOKEN in a .env file at the project root (Mapbox public token).";
       return;
     }
 
     mapboxgl.accessToken = token;
 
-    // Mapbox Standard-ს არ აქვს legacy „composite“ წყარო — 3D ობიექტები Standard-ის config-ით ირთვება.
+    // Mapbox Standard has no legacy "composite" source; 3D objects use Standard style config.
     map = new mapboxgl.Map({
       container,
       style: "mapbox://styles/mapbox/standard",
@@ -27,6 +31,7 @@
       pitch: 65,
       bearing: -25,
       antialias: true,
+      ...(USE_FLAT_MAP_ONLY ? { projection: "mercator" } : {}),
       config: {
         basemap: {
           show3dObjects: true,
@@ -36,7 +41,31 @@
 
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
+    // Globe ↔ Mercator transition at high pitch visually shifts the globe; reset pitch/bearing during
+    // zoom (not only on zoomend), before zoom is low enough for the globe to appear.
+    const PITCH_ZOOM_CUTOFF = 8;
+    const HIGH_PITCH = 65;
+    const HIGH_BEARING = -25;
+
+    function syncPitchBearingToZoom() {
+      const z = map.getZoom();
+      const low = z < PITCH_ZOOM_CUTOFF;
+      const tp = low ? 0 : HIGH_PITCH;
+      const tb = low ? 0 : HIGH_BEARING;
+      if (Math.abs(map.getPitch() - tp) > 0.01) map.setPitch(tp);
+      if (Math.abs(map.getBearing() - tb) > 0.01) map.setBearing(tb);
+    }
+
+    function scheduleSyncPitchBearing() {
+      if (syncPitchRaf) return;
+      syncPitchRaf = requestAnimationFrame(() => {
+        syncPitchRaf = 0;
+        syncPitchBearingToZoom();
+      });
+    }
+
     map.on("load", () => {
+      map.resize();
       if (typeof map.setConfigProperty === "function") {
         try {
           map.setConfigProperty("basemap", "show3dObjects", true);
@@ -46,6 +75,13 @@
       }
     });
 
+    map.once("idle", () => {
+      map.resize();
+    });
+
+    map.on("zoom", scheduleSyncPitchBearing);
+    map.on("zoomend", syncPitchBearingToZoom);
+
     map.on("error", (e) => {
       if (e.error?.message) {
         errorMessage = e.error.message;
@@ -54,6 +90,8 @@
   });
 
   onDestroy(() => {
+    if (syncPitchRaf) cancelAnimationFrame(syncPitchRaf);
+    syncPitchRaf = 0;
     map?.remove();
     map = undefined;
   });

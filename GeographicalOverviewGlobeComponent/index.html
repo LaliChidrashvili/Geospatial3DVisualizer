@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Geographical Overview Globe</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #3b5264;
+        font-family: Arial, sans-serif;
+      }
+
+      #globe {
+        width: 100%;
+        height: 78vh;
+        min-height: 420px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="globe"></div>
+
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script>
+      function renderGlobe() {
+        const countries = [
+          "United States", "Canada", "Brazil", "Argentina", "United Kingdom",
+          "France", "Germany", "Spain", "Italy", "Georgia", "Turkey",
+          "Ukraine", "India", "China", "Japan", "South Korea", "Indonesia",
+          "Australia", "South Africa", "Egypt"
+        ];
+
+        const counts = [95, 42, 61, 23, 58, 49, 63, 44, 47, 35, 52, 31, 88, 102, 76, 69, 54, 40, 33, 28];
+
+        const data = [
+          {
+            type: "choropleth",
+            locationmode: "country names",
+            locations: countries,
+            z: counts,
+            zmin: 0,
+            zmax: 110,
+            colorscale: [
+              [0.0, "#F2F2EF"],
+              [0.2, "#C4D2E3"],
+              [0.4, "#929FA9"],
+              [0.6, "#516575"],
+              [0.8, "#253F53"],
+              [1.0, "#162632"]
+            ],
+            marker: { line: { color: "#444", width: 0.2 } },
+            hovertemplate: "<b>%{location}</b><br>%{z} PDBs<extra></extra>",
+            showscale: false
+          }
+        ];
+
+        const layout = {
+          margin: { t: 0, r: 0, b: 0, l: 0 },
+          paper_bgcolor: "#3B5264",
+          plot_bgcolor: "#3B5264",
+          geo: {
+            bgcolor: "#3B5264",
+            projection: { type: "orthographic", rotation: { lon: 0, lat: 0, roll: 0 } },
+            showland: true,
+            landcolor: "lightgray",
+            showocean: true,
+            oceancolor: "white",
+            showcountries: true,
+            countrycolor: "#F2F2EF",
+            showlakes: true,
+            lakecolor: "white"
+          }
+        };
+
+        window.Plotly.newPlot("globe", data, layout, {
+          responsive: true,
+          displayModeBar: false,
+          scrollZoom: false
+        });
+      }
+
+      window.addEventListener("load", function () {
+        if (window.Plotly) {
+          renderGlobe();
+        } else {
+          document.getElementById("globe").innerHTML =
+            '<div style="color:#fff;padding:24px;text-align:center;">Could not load globe library. Check internet and refresh.</div>';
+        }
+      });
+    </script>
+  </body>
+</html>

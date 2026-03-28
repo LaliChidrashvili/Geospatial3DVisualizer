@@ -1,7 +1,6 @@
 /**
- * Education highlights on Mapbox Standard: 3D fill-extrusion "caps" on building footprints
- * (mapbox-streets-v8 building layer). POI circles removed — only buildings.
- * Caps sit on roof height from tile data so Standard's grey 3D mass stays below; color shows category.
+ * Education highlights — Mapbox Standard + mapbox-streets-v8.
+ * მხოლოდ `building` fill-extrusion (poi წრეები აღარ გამოიყენება).
  */
 
 export const SOURCE_ID = "streets-education-highlight";
@@ -9,7 +8,7 @@ export const SOURCE_ID = "streets-education-highlight";
 /** Default building height (m) when the tile has no height property */
 export const DEFAULT_BUILDING_HEIGHT_M = 15;
 
-/** Extra meters above roof for highlighted education buildings (vs grey Standard extrusion) */
+/** Extra meters above roof for highlighted education buildings */
 const HIGHLIGHT_ROOF_CAP_M = 6;
 
 const LAYERS = {
@@ -18,19 +17,36 @@ const LAYERS = {
   kinderBuilding: "edu-highlight-bldg-kinder",
 };
 
+/** building: ბაღი / საბავშვო */
+const FILTER_KINDER_BUILDING = [
+  "any",
+  ["==", ["get", "class"], "kindergarten"],
+  ["==", ["get", "type"], "kindergarten"],
+  ["==", ["get", "class"], "preschool"],
+];
+
 /**
- * Roof elevation (m) from ground — matches Mapbox Streets building `height`.
- * @returns {import('mapbox-gl').ExpressionSpecification}
+ * სკოლა: school / education კლასები, მაგრამ არა უნივერსიტეტი/კოლეჯი
+ * (class=education ხშირად ერთდება უნივერსიტეტს — უნდა გამოვრიცხოთ type-ით).
  */
+const FILTER_SCHOOL_BUILDING = [
+  "all",
+  [
+    "any",
+    ["==", ["get", "type"], "school"],
+    ["==", ["get", "class"], "school"],
+    ["==", ["get", "class"], "education"],
+  ],
+  ["!", ["in", ["get", "type"], ["literal", ["university", "college"]]]],
+];
+
+/** უნივერსიტეტი — მხოლოდ type=university */
+const FILTER_UNI_BUILDING = ["==", ["get", "type"], "university"];
+
 function roofHeightExpr() {
   return ["coalesce", ["get", "height"], DEFAULT_BUILDING_HEIGHT_M];
 }
 
-/**
- * Extrusion from roof to roof+cap (colored highlight on top of Standard 3D buildings).
- * @param {import('mapbox-gl').Map} map
- * @param {string} layerId
- */
 function applyExtrusionHeightFromData(map, layerId) {
   if (!map.getLayer(layerId)) return;
   const roof = roofHeightExpr();
@@ -40,6 +56,16 @@ function applyExtrusionHeightFromData(map, layerId) {
     "fill-extrusion-height",
     ["+", roof, HIGHLIGHT_ROOF_CAP_M]
   );
+}
+
+function extrusionPaint(color) {
+  const roof = roofHeightExpr();
+  return {
+    "fill-extrusion-color": color,
+    "fill-extrusion-opacity": 0.92,
+    "fill-extrusion-base": roof,
+    "fill-extrusion-height": ["+", roof, HIGHLIGHT_ROOF_CAP_M],
+  };
 }
 
 function symbolBeforeId(map) {
@@ -64,19 +90,10 @@ export function ensureEducationLayers(map) {
         type: "fill-extrusion",
         source: SOURCE_ID,
         "source-layer": "building",
-        filter: ["==", ["get", "type"], "school"],
+        filter: FILTER_SCHOOL_BUILDING,
         minzoom: 13,
         layout: { visibility: "none" },
-        paint: {
-          "fill-extrusion-color": "#ffeb3b",
-          "fill-extrusion-opacity": 0.92,
-          "fill-extrusion-base": roofHeightExpr(),
-          "fill-extrusion-height": [
-            "+",
-            roofHeightExpr(),
-            HIGHLIGHT_ROOF_CAP_M,
-          ],
-        },
+        paint: extrusionPaint("#ffeb3b"),
       },
       beforeId
     );
@@ -90,19 +107,10 @@ export function ensureEducationLayers(map) {
         type: "fill-extrusion",
         source: SOURCE_ID,
         "source-layer": "building",
-        filter: ["==", ["get", "type"], "university"],
+        filter: FILTER_UNI_BUILDING,
         minzoom: 13,
         layout: { visibility: "none" },
-        paint: {
-          "fill-extrusion-color": "#2196f3",
-          "fill-extrusion-opacity": 0.92,
-          "fill-extrusion-base": roofHeightExpr(),
-          "fill-extrusion-height": [
-            "+",
-            roofHeightExpr(),
-            HIGHLIGHT_ROOF_CAP_M,
-          ],
-        },
+        paint: extrusionPaint("#2196f3"),
       },
       beforeId
     );
@@ -116,24 +124,10 @@ export function ensureEducationLayers(map) {
         type: "fill-extrusion",
         source: SOURCE_ID,
         "source-layer": "building",
-        filter: [
-          "any",
-          ["==", ["get", "type"], "school"],
-          ["==", ["get", "type"], "kindergarten"],
-          ["==", ["get", "type"], "childcare"],
-        ],
+        filter: FILTER_KINDER_BUILDING,
         minzoom: 13,
         layout: { visibility: "none" },
-        paint: {
-          "fill-extrusion-color": "#ff9800",
-          "fill-extrusion-opacity": 0.92,
-          "fill-extrusion-base": roofHeightExpr(),
-          "fill-extrusion-height": [
-            "+",
-            roofHeightExpr(),
-            HIGHLIGHT_ROOF_CAP_M,
-          ],
-        },
+        paint: extrusionPaint("#ff9800"),
       },
       beforeId
     );
@@ -151,19 +145,14 @@ export function setEducationVisibility(map, v) {
   const { schools, kindergartens, universities } = v;
 
   if (map.getLayer(LAYERS.schoolBuilding)) {
-    map.setLayoutProperty(
-      LAYERS.schoolBuilding,
-      "visibility",
-      vis(schools)
-    );
+    map.setLayoutProperty(LAYERS.schoolBuilding, "visibility", vis(schools));
   }
 
   if (map.getLayer(LAYERS.kinderBuilding)) {
-    const showOrangeKinderBldg = kindergartens && !schools;
     map.setLayoutProperty(
       LAYERS.kinderBuilding,
       "visibility",
-      vis(showOrangeKinderBldg)
+      vis(kindergartens)
     );
   }
 

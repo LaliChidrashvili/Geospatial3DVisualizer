@@ -399,6 +399,15 @@
     }
     geocoderControl = geocoder;
 
+    const geocoderInput =
+      geocoderEl.querySelector("input.mapboxgl-ctrl-geocoder--input") ||
+      geocoderEl.querySelector("input[type='text']");
+    if (geocoderInput instanceof HTMLInputElement) {
+      geocoderInput.addEventListener("focus", () => {
+        requestAnimationFrame(() => geocoderInput.select());
+      });
+    }
+
     const Z_GLOBE = 5;
     const Z_TILT_START = 13;
     const Z_TILT_FULL = 17;
